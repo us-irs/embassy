@@ -51,7 +51,11 @@ pub fn run(args: TokenStream, item: TokenStream) -> TokenStream {
         .embassy_executor
         .unwrap_or(Expr::Verbatim(TokenStream::from_str("::embassy_executor").unwrap()));
 
-    if f.sig.asyncness.is_none() {
+    let returns_impl_trait = match &f.sig.output {
+        ReturnType::Type(_, ty) => matches!(**ty, Type::ImplTrait(_)),
+        _ => false,
+    };
+    if f.sig.asyncness.is_none() && !returns_impl_trait {
         error(&mut errors, &f.sig, "task functions must be async");
     }
     if !f.sig.generics.params.is_empty() {
@@ -66,17 +70,19 @@ pub fn run(args: TokenStream, item: TokenStream) -> TokenStream {
     if !f.sig.variadic.is_none() {
         error(&mut errors, &f.sig, "task functions must not be variadic");
     }
-    match &f.sig.output {
-        ReturnType::Default => {}
-        ReturnType::Type(_, ty) => match &**ty {
-            Type::Tuple(tuple) if tuple.elems.is_empty() => {}
-            Type::Never(_) => {}
-            _ => error(
-                &mut errors,
-                &f.sig,
-                "task functions must either not return a value, return `()` or return `!`",
-            ),
-        },
+    if f.sig.asyncness.is_some() {
+        match &f.sig.output {
+            ReturnType::Default => {}
+            ReturnType::Type(_, ty) => match &**ty {
+                Type::Tuple(tuple) if tuple.elems.is_empty() => {}
+                Type::Never(_) => {}
+                _ => error(
+                    &mut errors,
+                    &f.sig,
+                    "task functions must either not return a value, return `()` or return `!`",
+                ),
+            },
+        }
     }
 
     let mut args = Vec::new();
@@ -128,12 +134,12 @@ pub fn run(args: TokenStream, item: TokenStream) -> TokenStream {
     #[cfg(feature = "nightly")]
     let mut task_outer_body = quote! {
         trait _EmbassyInternalTaskTrait {
-            type Fut: ::core::future::Future + 'static;
+            type Fut: ::core::future::Future<Output: #embassy_executor::_export::TaskReturnValue> + 'static;
             fn construct(#fargs) -> Self::Fut;
         }
 
         impl _EmbassyInternalTaskTrait for () {
-            type Fut = impl core::future::Future + 'static;
+            type Fut = impl core::future::Future<Output: #embassy_executor::_export::TaskReturnValue> + 'static;
             fn construct(#fargs) -> Self::Fut {
                 #task_inner_ident(#(#full_args,)*)
             }
@@ -145,9 +151,20 @@ pub fn run(args: TokenStream, item: TokenStream) -> TokenStream {
     };
     #[cfg(not(feature = "nightly"))]
     let mut task_outer_body = quote! {
+        const fn __task_pool_get<F, Args, Fut>(_: F) -> &'static #embassy_executor::raw::TaskPool<Fut, POOL_SIZE>
+        where
+            F: #embassy_executor::_export::TaskFn<Args, Fut = Fut>,
+            Fut: ::core::future::Future + 'static,
+        {
+            unsafe { &*POOL.get().cast() }
+        }
+
         const POOL_SIZE: usize = #pool_size;
-        static POOL: #embassy_executor::_export::TaskPoolRef = #embassy_executor::_export::TaskPoolRef::new();
-        unsafe { POOL.get::<_, POOL_SIZE>()._spawn_async_fn(move || #task_inner_ident(#(#full_args,)*)) }
+        static POOL: #embassy_executor::_export::TaskPoolHolder<
+            {#embassy_executor::_export::task_pool_size::<_, _, _, POOL_SIZE>(#task_inner_ident)},
+            {#embassy_executor::_export::task_pool_align::<_, _, _, POOL_SIZE>(#task_inner_ident)},
+        > = unsafe { ::core::mem::transmute(#embassy_executor::_export::task_pool_new::<_, _, _, POOL_SIZE>(#task_inner_ident)) };
+        unsafe { __task_pool_get(#task_inner_ident)._spawn_async_fn(move || #task_inner_ident(#(#full_args,)*)) }
     };
 
     let task_outer_attrs = task_inner.attrs.clone();

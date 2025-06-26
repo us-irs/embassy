@@ -11,6 +11,7 @@ mod generic_phy;
 use core::mem::MaybeUninit;
 use core::task::Context;
 
+use embassy_hal_internal::PeripheralType;
 use embassy_net_driver::{Capabilities, HardwareAddress, LinkState};
 use embassy_sync::waitqueue::AtomicWaker;
 
@@ -201,7 +202,7 @@ trait SealedInstance {
 
 /// Ethernet instance.
 #[allow(private_bounds)]
-pub trait Instance: SealedInstance + RccPeripheral + Send + 'static {}
+pub trait Instance: SealedInstance + PeripheralType + RccPeripheral + Send + 'static {}
 
 impl SealedInstance for crate::peripherals::ETH {
     fn regs() -> crate::pac::eth::Eth {
