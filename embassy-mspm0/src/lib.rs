@@ -13,10 +13,13 @@ pub(crate) mod fmt;
 // This must be declared early as well for
 mod macros;
 
+pub mod adc;
 pub mod dma;
 pub mod gpio;
+pub mod i2c;
 pub mod timer;
 pub mod uart;
+pub mod wwdt;
 
 /// Operating modes for peripherals.
 pub mod mode {
@@ -111,11 +114,13 @@ macro_rules! bind_interrupts {
             #[no_mangle]
             $(#[cfg($cond_irq)])?
             unsafe extern "C" fn $irq() {
-                $(
-                    $(#[cfg($cond_handler)])?
-                    <$handler as $crate::interrupt::typelevel::Handler<$crate::interrupt::typelevel::$irq>>::on_interrupt();
+                unsafe {
+                    $(
+                        $(#[cfg($cond_handler)])?
+                        <$handler as $crate::interrupt::typelevel::Handler<$crate::interrupt::typelevel::$irq>>::on_interrupt();
 
-                )*
+                    )*
+                }
             }
 
             $(#[cfg($cond_irq)])?
@@ -191,7 +196,7 @@ pub fn init(config: Config) -> Peripherals {
 
         _generated::enable_group_interrupts(cs);
 
-        #[cfg(mspm0c110x)]
+        #[cfg(any(mspm0c110x, mspm0l110x))]
         unsafe {
             use crate::_generated::interrupt::typelevel::Interrupt;
             crate::interrupt::typelevel::GPIOA::enable();
