@@ -57,7 +57,7 @@ features = ["nrf52840", "time", "defmt", "unstable-pac", "gpiote", "time-driver-
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["rt"]
+default = ["rt", "nrf52840"]
 ## Cortex-M runtime (enabled by default)
 rt = ["nrf-pac/rt"]
 
